@@ -1,7 +1,8 @@
 name: "CI"
 
 env:
-  API_KEY_ALCHEMY: ${{ secrets.API_KEY_ALCHEMY }}
+  WORLDCHAIN_RPC_URL: ${{ secrets.WORLDCHAIN_RPC_URL }}
+  ALCHEMY_API_KEY: ${{ secrets.ALCHEMY_API_KEY }}
   FOUNDRY_PROFILE: "ci"
 
 on:
@@ -84,7 +85,7 @@ jobs:
           )" >> $GITHUB_ENV
 
       - name: "Run the tests"
-        run: "forge test"
+        run: "forge test -f $WORLDCHAIN_RPC_URL"
 
       - name: "Add test summary"
         run: |
