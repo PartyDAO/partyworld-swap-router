@@ -7,6 +7,11 @@ import { ERC20 } from "solmate/src/tokens/ERC20.sol";
 import { SafeTransferLib } from "solmate/src/utils/SafeTransferLib.sol";
 import { Permit2, Permit2Helper } from "src/Permit2Helper.sol";
 
+enum FeeToken {
+    INPUT,
+    OUTPUT
+}
+
 // Modified from RainbowRouter: https://etherscan.io/address/0x00000000009726632680FB29d3F7A9734E3010E2#code
 contract BaseAggregator is Permit2Helper, ReentrancyGuard {
     /// @dev Set of allowed swapTargets.
@@ -90,6 +95,7 @@ contract BaseAggregator is Permit2Helper, ReentrancyGuard {
         address payable target,
         bytes calldata swapCallData,
         uint256 sellAmount,
+        FeeToken feeToken,
         uint256 feeAmount,
         Permit2 memory permit
     )
@@ -114,7 +120,9 @@ contract BaseAggregator is Permit2Helper, ReentrancyGuard {
         );
 
         // 3 - Approve the aggregator's contract to swap the tokens if needed
-        SafeTransferLib.safeApprove(ERC20(sellTokenAddress), target, sellAmount - feeAmount);
+        SafeTransferLib.safeApprove(
+            ERC20(sellTokenAddress), target, feeToken == FeeToken.INPUT ? sellAmount - feeAmount : sellAmount
+        );
 
         // 4 - Call the encoded swap function call on the contract at `target`,
         // passing along any ETH attached to this function call to cover protocol fees.
@@ -137,8 +145,9 @@ contract BaseAggregator is Permit2Helper, ReentrancyGuard {
         require(initialOutputTokenAmount < finalOutputTokenAmount, "NO_TOKENS");
 
         // 7 - Send tokens to the user
+        uint256 tokensToSend = finalOutputTokenAmount - initialOutputTokenAmount;
         SafeTransferLib.safeTransfer(
-            ERC20(buyTokenAddress), msg.sender, finalOutputTokenAmount - initialOutputTokenAmount
+            ERC20(buyTokenAddress), msg.sender, feeToken == FeeToken.OUTPUT ? tokensToSend - feeAmount : tokensToSend
         );
     }
 

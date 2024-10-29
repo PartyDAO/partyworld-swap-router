@@ -7,6 +7,7 @@ import { ISignatureTransfer } from "@uniswap/permit2/src/interfaces/ISignatureTr
 import { ERC20 } from "solmate/src/tokens/ERC20.sol";
 import { Permit2 } from "src/Permit2Helper.sol";
 import { SwapRouter } from "src/SwapRouter.sol";
+import { FeeToken } from "src/BaseAggregator.sol";
 import { MockDEX } from "test/mocks/MockDEX.sol";
 
 contract SwapRouterTest is Test {
@@ -99,7 +100,9 @@ contract SwapRouterTest is Test {
         uint256 wldBalanceBefore = wld.balanceOf(user);
 
         vm.prank(user);
-        router.fillQuoteTokenToToken(address(usdce), address(wld), target, swapCallData, sellAmount, feeAmount, permit);
+        router.fillQuoteTokenToToken(
+            address(usdce), address(wld), target, swapCallData, sellAmount, FeeToken.INPUT, feeAmount, permit
+        );
 
         assertEq(usdce.balanceOf(user), usdceBalanceBefore - sellAmount);
         assertEq(wld.balanceOf(user), wldBalanceBefore + buyAmount);
