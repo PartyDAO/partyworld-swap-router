@@ -6,15 +6,15 @@ import "forge-std/src/Test.sol";
 import { ISignatureTransfer } from "@uniswap/permit2/src/interfaces/ISignatureTransfer.sol";
 import { ERC20 } from "solmate/src/tokens/ERC20.sol";
 import { Permit2 } from "src/Permit2Helper.sol";
-import { SwapRouter } from "src/SwapRouter.sol";
+import { UnoRouter } from "src/UnoRouter.sol";
 import { FeeToken } from "src/BaseAggregator.sol";
 import { MockDEX } from "test/mocks/MockDEX.sol";
 
-contract SwapRouterTest is Test {
+contract UnoRouterTest is Test {
     address owner;
     address user;
     uint256 userPrivateKey;
-    SwapRouter router;
+    UnoRouter router;
     MockDEX dex;
     ISignatureTransfer permit2;
     ERC20 usdce;
@@ -33,7 +33,7 @@ contract SwapRouterTest is Test {
         dex = MockDEX(0x7a8D8bddd596E6Ff90ad6E4f003565a1113710C6);
         address[] memory swapTargets = new address[](1);
         swapTargets[0] = address(dex);
-        router = new SwapRouter(owner, swapTargets, permit2);
+        router = new UnoRouter(owner, swapTargets, permit2);
         usdce = ERC20(0x79A02482A880bCE3F13e09Da970dC34db4CD24d1);
         wld = ERC20(0x2cFc85d8E48F8EAB294be644d9E25C3030863003);
 
