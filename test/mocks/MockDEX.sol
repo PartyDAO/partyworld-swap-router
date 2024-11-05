@@ -26,4 +26,11 @@ contract MockDEX {
     function swapETHForTokens(ERC20 buyToken, uint256 buyAmount) external payable {
         SafeTransferLib.safeTransfer(buyToken, msg.sender, buyAmount);
     }
+
+    function swapPartialETHForTokens(ERC20 buyToken, uint256 buyAmount, uint256 remainingEth) external payable {
+        SafeTransferLib.safeTransfer(buyToken, msg.sender, buyAmount);
+        if (remainingEth > 0) {
+            payable(msg.sender).call{ value: remainingEth }("");
+        }
+    }
 }

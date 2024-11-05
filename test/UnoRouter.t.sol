@@ -7,7 +7,7 @@ import { ISignatureTransfer } from "@uniswap/permit2/src/interfaces/ISignatureTr
 import { ERC20 } from "solmate/src/tokens/ERC20.sol";
 import { Permit2 } from "src/Permit2Helper.sol";
 import { UnoRouter } from "src/UnoRouter.sol";
-import { FeeToken } from "src/BaseAggregator.sol";
+import { BaseAggregator, FeeToken } from "src/BaseAggregator.sol";
 import { MockDEX } from "test/mocks/MockDEX.sol";
 
 contract UnoRouterTest is Test {
@@ -30,7 +30,7 @@ contract UnoRouterTest is Test {
         owner = makeAddr("owner");
         (user, userPrivateKey) = makeAddrAndKey("user");
         permit2 = ISignatureTransfer(0x000000000022D473030F116dDEE9F6B43aC78BA3);
-        dex = MockDEX(0x7a8D8bddd596E6Ff90ad6E4f003565a1113710C6);
+        dex = new MockDEX();
         address[] memory swapTargets = new address[](1);
         swapTargets[0] = address(dex);
         router = new UnoRouter(owner, swapTargets, permit2);
@@ -60,6 +60,16 @@ contract UnoRouterTest is Test {
         uint256 ethBalanceBefore = address(user).balance;
         uint256 usdceBalanceBefore = usdce.balanceOf(user);
 
+        vm.expectEmit(true, true, true, true);
+        emit BaseAggregator.FillQuoteEthToToken(
+            address(usdce),
+            target,
+            user,
+            ethAmount - feeAmount, // Should exclude fee amount
+            buyAmount,
+            feeAmount
+        );
+
         vm.prank(user);
         router.fillQuoteEthToToken{ value: ethAmount }(address(usdce), target, swapCallData, feeAmount);
 
@@ -68,7 +78,59 @@ contract UnoRouterTest is Test {
         assertEq(address(router).balance, feeAmount);
     }
 
-    function testFillQuoteTokenToToken() public {
+    function testFillQuoteEthToToken_withEthRemaining() public {
+        uint256 feeAmount = 0.01 ether;
+        uint256 ethAmount = 1 ether;
+        uint256 buyAmount = 1000e6;
+        uint256 remainingEth = 0.001 ether;
+        bytes memory swapCallData = abi.encodeWithSignature(
+            "swapPartialETHForTokens(address,uint256,uint256)", address(usdce), buyAmount, remainingEth
+        );
+        address payable target = payable(address(dex));
+
+        uint256 ethBalanceBefore = address(user).balance;
+        uint256 usdceBalanceBefore = usdce.balanceOf(user);
+
+        vm.expectEmit(true, true, true, true);
+        emit BaseAggregator.FillQuoteEthToToken(
+            address(usdce),
+            target,
+            user,
+            ethAmount - feeAmount - remainingEth, // Should exclude fee amount and remainingEth
+            buyAmount,
+            feeAmount
+        );
+
+        vm.prank(user);
+        router.fillQuoteEthToToken{ value: ethAmount }(address(usdce), target, swapCallData, feeAmount);
+
+        assertEq(address(user).balance, ethBalanceBefore - ethAmount + remainingEth);
+        assertEq(usdce.balanceOf(user), usdceBalanceBefore + buyAmount);
+        assertEq(address(router).balance, feeAmount);
+    }
+
+    function testFillQuoteEthToToken_withNoFee() public {
+        uint256 ethAmount = 1 ether;
+        uint256 buyAmount = 1000e6;
+        bytes memory swapCallData =
+            abi.encodeWithSignature("swapETHForTokens(address,uint256)", address(usdce), buyAmount);
+        address payable target = payable(address(dex));
+
+        uint256 ethBalanceBefore = address(user).balance;
+        uint256 usdceBalanceBefore = usdce.balanceOf(user);
+
+        vm.expectEmit(true, true, true, true);
+        emit BaseAggregator.FillQuoteEthToToken(address(usdce), target, user, ethAmount, buyAmount, 0);
+
+        vm.prank(user);
+        router.fillQuoteEthToToken{ value: ethAmount }(address(usdce), target, swapCallData, 0);
+
+        assertEq(address(user).balance, ethBalanceBefore - ethAmount);
+        assertEq(usdce.balanceOf(user), usdceBalanceBefore + buyAmount);
+        assertEq(address(router).balance, 0);
+    }
+
+    function testFillQuoteTokenToToken_withInputTokenFee() public {
         uint256 sellAmount = 10e6;
         uint256 buyAmount = 10e18;
         uint256 feeAmount = 1e6;
@@ -99,6 +161,18 @@ contract UnoRouterTest is Test {
         uint256 usdceBalanceBefore = usdce.balanceOf(user);
         uint256 wldBalanceBefore = wld.balanceOf(user);
 
+        vm.expectEmit(true, true, true, true);
+        emit BaseAggregator.FillQuoteTokenToToken(
+            address(usdce),
+            address(wld),
+            user,
+            target,
+            sellAmount - feeAmount, // Should exclude fee amount
+            buyAmount,
+            FeeToken.INPUT,
+            feeAmount
+        );
+
         vm.prank(user);
         router.fillQuoteTokenToToken(
             address(usdce), address(wld), target, swapCallData, sellAmount, FeeToken.INPUT, feeAmount, permit
@@ -107,6 +181,96 @@ contract UnoRouterTest is Test {
         assertEq(usdce.balanceOf(user), usdceBalanceBefore - sellAmount);
         assertEq(wld.balanceOf(user), wldBalanceBefore + buyAmount);
         assertEq(usdce.balanceOf(address(router)), feeAmount);
+    }
+
+    function testFillQuoteTokenToToken_withOutputTokenFee() public {
+        uint256 sellAmount = 10e6;
+        uint256 buyAmount = 10e18;
+        uint256 feeAmount = 1e18;
+        bytes memory swapCallData = abi.encodeWithSignature(
+            "swapTokensForTokens(address,address,uint256,uint256)", address(usdce), address(wld), sellAmount, buyAmount
+        );
+        uint256 nonce = 0;
+        uint256 deadline = block.timestamp + 30 minutes;
+        address payable target = payable(address(dex));
+        bytes32 tokenPermissions = keccak256(abi.encode(_TOKEN_PERMISSIONS_TYPEHASH, address(usdce), sellAmount));
+        bytes32 msgHash = keccak256(
+            abi.encodePacked(
+                "\x19\x01",
+                permit2.DOMAIN_SEPARATOR(),
+                keccak256(
+                    abi.encode(_PERMIT_TRANSFER_FROM_TYPEHASH, tokenPermissions, address(router), nonce, deadline)
+                )
+            )
+        );
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(userPrivateKey, msgHash);
+        bytes memory signature = bytes.concat(r, s, bytes1(v));
+        Permit2 memory permit = Permit2({ nonce: nonce, deadline: deadline, signature: signature });
+
+        uint256 usdceBalanceBefore = usdce.balanceOf(user);
+        uint256 wldBalanceBefore = wld.balanceOf(user);
+
+        vm.expectEmit(true, true, true, true);
+        emit BaseAggregator.FillQuoteTokenToToken(
+            address(usdce),
+            address(wld),
+            user,
+            target,
+            sellAmount,
+            buyAmount - feeAmount, // Should exclude fee amount
+            FeeToken.OUTPUT,
+            feeAmount
+        );
+
+        vm.prank(user);
+        router.fillQuoteTokenToToken(
+            address(usdce), address(wld), target, swapCallData, sellAmount, FeeToken.OUTPUT, feeAmount, permit
+        );
+
+        assertEq(usdce.balanceOf(user), usdceBalanceBefore - sellAmount);
+        assertEq(wld.balanceOf(user), wldBalanceBefore + buyAmount - feeAmount);
+        assertEq(wld.balanceOf(address(router)), feeAmount);
+    }
+
+    function testFillQuoteTokenToToken_withNoFee() public {
+        uint256 sellAmount = 10e6;
+        uint256 buyAmount = 10e18;
+        bytes memory swapCallData = abi.encodeWithSignature(
+            "swapTokensForTokens(address,address,uint256,uint256)", address(usdce), address(wld), sellAmount, buyAmount
+        );
+        uint256 nonce = 0;
+        uint256 deadline = block.timestamp + 30 minutes;
+        address payable target = payable(address(dex));
+        bytes32 tokenPermissions = keccak256(abi.encode(_TOKEN_PERMISSIONS_TYPEHASH, address(usdce), sellAmount));
+        bytes32 msgHash = keccak256(
+            abi.encodePacked(
+                "\x19\x01",
+                permit2.DOMAIN_SEPARATOR(),
+                keccak256(
+                    abi.encode(_PERMIT_TRANSFER_FROM_TYPEHASH, tokenPermissions, address(router), nonce, deadline)
+                )
+            )
+        );
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(userPrivateKey, msgHash);
+        bytes memory signature = bytes.concat(r, s, bytes1(v));
+        Permit2 memory permit = Permit2({ nonce: nonce, deadline: deadline, signature: signature });
+
+        uint256 usdceBalanceBefore = usdce.balanceOf(user);
+        uint256 wldBalanceBefore = wld.balanceOf(user);
+
+        vm.expectEmit(true, true, true, true);
+        emit BaseAggregator.FillQuoteTokenToToken(
+            address(usdce), address(wld), user, target, sellAmount, buyAmount, FeeToken.INPUT, 0
+        );
+
+        vm.prank(user);
+        router.fillQuoteTokenToToken(
+            address(usdce), address(wld), target, swapCallData, sellAmount, FeeToken.INPUT, 0, permit
+        );
+
+        assertEq(usdce.balanceOf(user), usdceBalanceBefore - sellAmount);
+        assertEq(wld.balanceOf(user), wldBalanceBefore + buyAmount);
+        assertEq(usdce.balanceOf(address(router)), 0);
     }
 
     function testFillQuoteTokenToEth() public {
@@ -136,11 +300,57 @@ contract UnoRouterTest is Test {
         uint256 usdceBalanceBefore = usdce.balanceOf(user);
         uint256 ethBalanceBefore = address(user).balance;
 
+        vm.expectEmit(true, true, true, true);
+        emit BaseAggregator.FillQuoteTokenToEth(
+            address(usdce),
+            user,
+            target,
+            sellAmount,
+            buyAmount - feeAmount, // Should exclude fee amount
+            feeAmount
+        );
+
         vm.prank(user);
         router.fillQuoteTokenToEth(address(usdce), target, swapCallData, sellAmount, feePercentage, permit);
 
         assertEq(usdce.balanceOf(user), usdceBalanceBefore - sellAmount);
         assertEq(address(user).balance, ethBalanceBefore + buyAmount - feeAmount);
         assertEq(address(router).balance, feeAmount);
+    }
+
+    function testFillQuoteTokenToEth_withNoFee() public {
+        uint256 sellAmount = 10e6;
+        uint256 buyAmount = 10e18;
+        bytes memory swapCallData =
+            abi.encodeWithSignature("swapTokensForETH(address,uint256,uint256)", address(usdce), sellAmount, buyAmount);
+        uint256 nonce = 0;
+        uint256 deadline = block.timestamp + 30 minutes;
+        address payable target = payable(address(dex));
+        bytes32 tokenPermissions = keccak256(abi.encode(_TOKEN_PERMISSIONS_TYPEHASH, address(usdce), sellAmount));
+        bytes32 msgHash = keccak256(
+            abi.encodePacked(
+                "\x19\x01",
+                permit2.DOMAIN_SEPARATOR(),
+                keccak256(
+                    abi.encode(_PERMIT_TRANSFER_FROM_TYPEHASH, tokenPermissions, address(router), nonce, deadline)
+                )
+            )
+        );
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(userPrivateKey, msgHash);
+        bytes memory signature = bytes.concat(r, s, bytes1(v));
+        Permit2 memory permit = Permit2({ nonce: nonce, deadline: deadline, signature: signature });
+
+        uint256 usdceBalanceBefore = usdce.balanceOf(user);
+        uint256 ethBalanceBefore = address(user).balance;
+
+        vm.expectEmit(true, true, true, true);
+        emit BaseAggregator.FillQuoteTokenToEth(address(usdce), user, target, sellAmount, buyAmount, 0);
+
+        vm.prank(user);
+        router.fillQuoteTokenToEth(address(usdce), target, swapCallData, sellAmount, 0, permit);
+
+        assertEq(usdce.balanceOf(user), usdceBalanceBefore - sellAmount);
+        assertEq(address(user).balance, ethBalanceBefore + buyAmount);
+        assertEq(address(router).balance, 0);
     }
 }
