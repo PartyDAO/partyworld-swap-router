@@ -29,6 +29,7 @@
   "scripts": {
     "clean": "rm -rf cache out",
     "build": "forge build",
+    "deploy": "forge script Deploy --chain world --rpc-url $WORLDCHAIN_RPC_URL --etherscan-api-key $WORLDSCAN_API_KEY --private-key $PRIVATE_KEY --verify --broadcast -vvv",
     "lint": "bun run lint:sol && bun run prettier:check",
     "lint:sol": "forge fmt --check && bun solhint \"{script,src,test}/**/*.sol\"",
     "prettier:check": "prettier --check \"**/*.{json,md,yml}\" --ignore-path \".prettierignore\"",
